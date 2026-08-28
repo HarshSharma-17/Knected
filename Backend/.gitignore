@@ -1,0 +1,70 @@
+cat > .gitignore <<'EOF'
+# ================================
+# Environment Variables
+# ================================
+.env
+.env.*
+!.env.example
+
+# ================================
+# Node.js
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ================================
+# Knected Backend Temporary Files
+# ================================
+Backend/src/temp/
+Backend/src/uploads/
+Backend/uploads/
+
+# ================================
+# Generated / Uploaded ZIP Files
+# ================================
+*.zip
+
+# ================================
+# Build Files
+# ================================
+dist/
+build/
+Frontend/dist/
+
+# ================================
+# IDE / Editor
+# ================================
+.vscode/
+.idea/
+
+# ================================
+# OS Files
+# ================================
+.DS_Store
+Thumbs.db
+
+# ================================
+# Logs
+# ================================
+*.log
+
+# ================================
+# Coverage
+# ================================
+coverage/
+htmlcov/
+.pytest_cache/
+EOF
