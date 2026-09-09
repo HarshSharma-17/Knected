@@ -27,6 +27,8 @@ const uploadRoutes = require("./routes/uploadRoutes");
 const analysisRoutes = require("./routes/analysisRoutes");
 const authRoutes = require("./routes/authRoutes");
 const projectRoutes = require("./routes/projectRoutes");
+const githubRoutes = require("./routes/githubRoutes");
+const aiRoutes = require("./routes/aiRoutes");
 const app = express();
 
 // ==============================
@@ -38,6 +40,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/projects", projectRoutes);
+app.use("/api/github", githubRoutes);
+app.use("/api/ai", aiRoutes);
 // ==============================
 // Health Check Route
 // ==============================
