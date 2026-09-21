@@ -1,38 +1,43 @@
 /**
  * ============================================================================
  * File: Graph.tsx
+ * Path: Frontend/src/pages/Graph.tsx
  * ----------------------------------------------------------------------------
  * Purpose:
- * Displays an interactive dependency graph for a Knected project.
+ * Displays the interactive dependency graph of a selected Knected project.
  *
  * Responsibilities:
- * - Fetch graph data from the backend
- * - Convert backend graph data into React Flow format
- * - Display source files as interactive nodes
- * - Display dependencies as connected edges
- * - Support zooming, panning and dragging
- * - Navigate back to project details
+ * - Fetch dependency graph data from the backend
+ * - Convert backend nodes and edges into React Flow format
+ * - Display an interactive dependency graph
+ * - Provide zoom, fit-view and minimap controls
+ * - Keep the graph visually consistent with the Knected application
+ *
+ * Backend API:
+ * GET /api/projects/:id/graph
  * ============================================================================
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
   ReactFlow,
-  Background,
   Controls,
   MiniMap,
-  MarkerType,
+  Background,
+  useNodesState,
+  useEdgesState,
   type Node,
   type Edge,
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
 
-/* ============================================================================
-   TYPES
-============================================================================ */
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface BackendNode {
   id: string;
@@ -45,30 +50,36 @@ interface BackendEdge {
   target: string;
 }
 
-interface GraphData {
-  nodes: BackendNode[];
-  edges: BackendEdge[];
+interface GraphResponse {
+  success: boolean;
+  message: string;
+  data: {
+    nodes: BackendNode[];
+    edges: BackendEdge[];
+  };
 }
 
-/* ============================================================================
-   COMPONENT
-============================================================================ */
+
+// ============================================================================
+// Component
+// ============================================================================
 
 const Graph = () => {
-  const navigate = useNavigate();
   const { id } = useParams();
+  const navigate = useNavigate();
 
-  const [graph, setGraph] = useState<GraphData>({
-    nodes: [],
-    edges: [],
-  });
+  const [nodes, setNodes, onNodesChange] =
+    useNodesState<Node>([]);
+
+  const [edges, setEdges, onEdgesChange] =
+    useEdgesState<Edge>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  /* ==========================================================================
-     FETCH GRAPH DATA
-  ========================================================================== */
+  // ==========================================================================
+  // Fetch graph from backend
+  // ==========================================================================
 
   useEffect(() => {
     const fetchGraph = async () => {
@@ -99,23 +110,86 @@ const Graph = () => {
           }
         );
 
-        const result = await response.json();
+        const result: GraphResponse = await response.json();
 
         if (!response.ok || !result.success) {
           throw new Error(
-            result.message || "Failed to fetch dependency graph."
+            result.message ||
+              "Failed to fetch dependency graph."
           );
         }
 
-        setGraph({
-          nodes: result.data?.nodes || [],
-          edges: result.data?.edges || [],
-        });
+        // ====================================================================
+        // Convert backend nodes into React Flow nodes
+        // ====================================================================
+
+        const graphNodes: Node[] =
+          result.data.nodes.map((node, index) => {
+            const column = index % 5;
+            const row = Math.floor(index / 5);
+
+            return {
+              id: node.id,
+
+              position: {
+                x: column * 310 + 100,
+                y: row * 145 + 80,
+              },
+
+              data: {
+                label: (
+                  <div style={styles.nodeContent}>
+
+                    <div style={styles.nodeType}>
+                      {node.type || "FILE"}
+                    </div>
+
+                    <div style={styles.nodeName}>
+                      {node.name}
+                    </div>
+
+                  </div>
+                ),
+              },
+
+              style: styles.graphNode,
+            };
+          });
+
+        // ====================================================================
+        // Convert backend edges into React Flow edges
+        // ====================================================================
+
+        const graphEdges: Edge[] =
+          result.data.edges.map((edge, index) => ({
+            id: `edge-${index}`,
+
+            source: edge.source,
+            target: edge.target,
+
+            animated: false,
+
+            style: {
+              stroke: "#596267",
+              strokeWidth: 1.4,
+            },
+
+            markerEnd: {
+              type: "arrowclosed",
+              color: "#8b969b",
+            },
+          }));
+
+        setNodes(graphNodes);
+        setEdges(graphEdges);
+
       } catch (err) {
         if (err instanceof Error) {
           setError(err.message);
         } else {
-          setError("Something went wrong while loading the graph.");
+          setError(
+            "Failed to load dependency graph."
+          );
         }
       } finally {
         setLoading(false);
@@ -123,186 +197,54 @@ const Graph = () => {
     };
 
     fetchGraph();
-  }, [id, navigate]);
+  }, [id, navigate, setNodes, setEdges]);
 
-  /* ==========================================================================
-     CONVERT BACKEND NODES → REACT FLOW NODES
-  ========================================================================== */
 
-  const flowNodes: Node[] = useMemo(() => {
-    const totalNodes = graph.nodes.length;
-
-    return graph.nodes.map((node, index) => {
-      /*
-       * Arrange nodes in a circular layout initially.
-       * Users can drag them afterwards.
-       */
-      const angle =
-        (index / Math.max(totalNodes, 1)) * Math.PI * 2;
-
-      const radius = Math.max(
-        180,
-        Math.min(320, totalNodes * 45)
-      );
-
-      return {
-        id: node.id,
-
-        position: {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        },
-
-        data: {
-          label: (
-            <div style={styles.nodeContent}>
-              <div style={styles.nodeType}>
-                {getNodeType(node.type)}
-              </div>
-
-              <div style={styles.nodeName}>
-                {getFileName(node.name || node.id)}
-              </div>
-
-              <div style={styles.nodePath}>
-                {node.name || node.id}
-              </div>
-            </div>
-          ),
-        },
-
-        style: styles.node,
-      };
-    });
-  }, [graph.nodes]);
-
-  /* ==========================================================================
-     CONVERT BACKEND EDGES → REACT FLOW EDGES
-  ========================================================================== */
-
-  const flowEdges: Edge[] = useMemo(() => {
-    return graph.edges.map((edge, index) => ({
-      id: `edge-${index}`,
-
-      source: edge.source,
-      target: edge.target,
-
-      animated: true,
-
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-      },
-
-      style: {
-        strokeWidth: 1.5,
-      },
-    }));
-  }, [graph.edges]);
-
-  /* ==========================================================================
-     LOADING STATE
-  ========================================================================== */
+  // ==========================================================================
+  // Loading State
+  // ==========================================================================
 
   if (loading) {
     return (
-      <div style={styles.centerState}>
-        <div style={styles.spinner}></div>
+      <div style={styles.page}>
+        <div style={styles.centerMessage}>
 
-        <h2 style={styles.stateTitle}>
-          Building dependency graph...
-        </h2>
+          <div style={styles.loader}></div>
 
-        <p style={styles.stateText}>
-          Knected is preparing your project's connections.
-        </p>
+          <h2 style={styles.loadingTitle}>
+            Loading Dependency Graph
+          </h2>
+
+          <p style={styles.loadingText}>
+            Knected is preparing your project graph...
+          </p>
+
+        </div>
       </div>
     );
   }
 
-  /* ==========================================================================
-     ERROR STATE
-  ========================================================================== */
+
+  // ==========================================================================
+  // Error State
+  // ==========================================================================
 
   if (error) {
     return (
-      <div style={styles.centerState}>
-        <div style={styles.errorIcon}>!</div>
+      <div style={styles.page}>
+        <div style={styles.centerMessage}>
 
-        <h2 style={styles.stateTitle}>
-          Unable to load graph
-        </h2>
+          <div style={styles.errorIcon}>
+            !
+          </div>
 
-        <p style={styles.stateText}>
-          {error}
-        </p>
+          <h2 style={styles.errorTitle}>
+            Unable to Load Graph
+          </h2>
 
-        <button
-          style={styles.primaryButton}
-          onClick={() => navigate(`/projects/${id}`)}
-        >
-          ← Back to Project
-        </button>
-      </div>
-    );
-  }
-
-  /* ==========================================================================
-     MAIN UI
-  ========================================================================== */
-
-  return (
-    <div style={styles.page}>
-
-      {/* ================================================================
-          NAVBAR
-      ================================================================ */}
-
-      <nav style={styles.navbar}>
-
-        <div
-          style={styles.logo}
-          onClick={() => navigate("/dashboard")}
-        >
-          Knected
-        </div>
-
-        <div style={styles.navLinks}>
-
-          <button
-            style={styles.navButton}
-            onClick={() => navigate("/dashboard")}
-          >
-            Dashboard
-          </button>
-
-          <button
-            style={styles.navButtonActive}
-            onClick={() =>
-              navigate(`/projects/${id}/graph`)
-            }
-          >
-            Graph
-          </button>
-
-          <button
-            style={styles.navButton}
-            onClick={() => navigate("/profile")}
-          >
-            Profile
-          </button>
-
-        </div>
-
-      </nav>
-
-
-      {/* ================================================================
-          GRAPH HEADER
-      ================================================================ */}
-
-      <header style={styles.header}>
-
-        <div>
+          <p style={styles.errorText}>
+            {error}
+          </p>
 
           <button
             style={styles.backButton}
@@ -310,51 +252,158 @@ const Graph = () => {
               navigate(`/projects/${id}`)
             }
           >
+            ← Back to Project
+          </button>
+
+        </div>
+      </div>
+    );
+  }
+
+
+  // ==========================================================================
+  // Main Graph Page
+  // ==========================================================================
+
+  return (
+    <div style={styles.page}>
+
+      {/* ====================================================================
+          React Flow control styling
+      ==================================================================== */}
+
+      <style>
+        {`
+          .react-flow__controls {
+            border: 1px solid #343b3f;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #0d1012;
+            box-shadow: 0 10px 30px rgba(0,0,0,.35);
+          }
+
+          .react-flow__controls-button {
+            width: 42px;
+            height: 42px;
+            background: #0d1012;
+            border: none;
+            border-bottom: 1px solid #292f32;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .react-flow__controls-button:last-child {
+            border-bottom: none;
+          }
+
+          .react-flow__controls-button svg {
+            width: 18px;
+            height: 18px;
+            stroke: #b8c0c3;
+            fill: none;
+          }
+
+          .react-flow__controls-button:hover {
+            background: #171b1e;
+          }
+
+          .react-flow__minimap {
+            background: #0c0f10 !important;
+            border: 1px solid #343b3f !important;
+            border-radius: 4px !important;
+            box-shadow: 0 10px 30px rgba(0,0,0,.35);
+          }
+
+          .react-flow__minimap-mask {
+            fill: rgba(8,10,11,.58) !important;
+          }
+
+          .react-flow__minimap-node {
+            stroke: #d0d7d9 !important;
+            fill: #7d898e !important;
+          }
+
+          .react-flow__edge-path {
+            stroke-linecap: round;
+          }
+
+          .react-flow__attribution {
+            display: none;
+          }
+        `}
+      </style>
+
+
+      {/* ====================================================================
+          Header
+      ==================================================================== */}
+
+      <header style={styles.header}>
+
+        <div style={styles.headerLeft}>
+
+          <button
+            style={styles.backLink}
+            onClick={() =>
+              navigate(`/projects/${id}`)
+            }
+          >
             ← Project Details
           </button>
 
-          <div style={styles.eyebrow}>
-            DEPENDENCY VISUALIZATION
-          </div>
-
-          <h1 style={styles.heading}>
-            Explore your code connections.
+          <h1 style={styles.title}>
+            Dependency Graph
           </h1>
 
-          <p style={styles.description}>
-            Drag nodes, zoom in and explore how your
-            source files depend on each other.
+          <p style={styles.subtitle}>
+            Visual representation of your project's
+            code dependencies.
           </p>
 
         </div>
 
 
-        {/* GRAPH STATS */}
+        {/* ==================================================================
+            Statistics
+        ================================================================== */}
 
-        <div style={styles.stats}>
+        <div style={styles.statsContainer}>
 
-          <div style={styles.stat}>
+          <div style={styles.statCard}>
 
-            <span style={styles.statNumber}>
-              {graph.nodes.length}
-            </span>
+            <div style={styles.statIcon}>
+              ●
+            </div>
 
-            <span style={styles.statLabel}>
-              Nodes
-            </span>
+            <div>
+              <div style={styles.statNumber}>
+                {nodes.length}
+              </div>
+
+              <div style={styles.statLabel}>
+                NODES
+              </div>
+            </div>
 
           </div>
 
 
-          <div style={styles.stat}>
+          <div style={styles.statCard}>
 
-            <span style={styles.statNumber}>
-              {graph.edges.length}
-            </span>
+            <div style={styles.statIcon}>
+              ↗
+            </div>
 
-            <span style={styles.statLabel}>
-              Connections
-            </span>
+            <div>
+              <div style={styles.statNumber}>
+                {edges.length}
+              </div>
+
+              <div style={styles.statLabel}>
+                CONNECTIONS
+              </div>
+            </div>
 
           </div>
 
@@ -363,15 +412,13 @@ const Graph = () => {
       </header>
 
 
-      {/* ================================================================
-          GRAPH AREA
-      ================================================================ */}
+      {/* ====================================================================
+          Graph Area
+      ==================================================================== */}
 
-      <main style={styles.graphContainer}>
+      <main style={styles.graphWrapper}>
 
-        {graph.nodes.length === 0 ? (
-
-          /* EMPTY GRAPH */
+        {nodes.length === 0 ? (
 
           <div style={styles.emptyGraph}>
 
@@ -380,92 +427,90 @@ const Graph = () => {
             </div>
 
             <h2 style={styles.emptyTitle}>
-              No dependencies found
+              No Dependencies Found
             </h2>
 
             <p style={styles.emptyText}>
-              Knected could not find any dependency
-              relationships in this project.
+              Knected could not find any supported
+              dependency relationships in this project.
             </p>
-
-            <button
-              style={styles.primaryButton}
-              onClick={() =>
-                navigate(`/projects/${id}`)
-              }
-            >
-              ← Back to Project
-            </button>
 
           </div>
 
         ) : (
 
-          /* ==============================================================
-             REACT FLOW
-          ============================================================== */
-
           <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
+            nodes={nodes}
+            edges={edges}
+
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+
             fitView
 
             fitViewOptions={{
-              padding: 0.25,
+              padding: 0.12,
+              minZoom: 0.15,
+              maxZoom: 1.15,
             }}
 
-            minZoom={0.2}
-            maxZoom={2}
+            minZoom={0.08}
+            maxZoom={2.5}
 
-            style={{
-              width: "100%",
-              height: "100%",
-            }}
+            nodesDraggable={true}
+            nodesConnectable={false}
+
+            zoomOnScroll={true}
+            zoomOnPinch={true}
+
+            panOnDrag={true}
+
+            attributionPosition="bottom-left"
           >
 
+            {/* --------------------------------------------------------------
+                Background Grid
+            -------------------------------------------------------------- */}
+
             <Background
-              gap={24}
+              gap={28}
               size={1}
+              color="#252b2e"
             />
 
-            <Controls />
+
+            {/* --------------------------------------------------------------
+                Zoom Controls
+            -------------------------------------------------------------- */}
+
+            <Controls
+              showZoom={true}
+              showFitView={true}
+              showInteractive={true}
+            />
+
+
+            {/* --------------------------------------------------------------
+                Mini Map
+            -------------------------------------------------------------- */}
 
             <MiniMap
-              pannable
-              zoomable
-              nodeStrokeWidth={3}
+              nodeStrokeWidth={1.5}
+              nodeColor="#7d898e"
+              nodeStrokeColor="#d0d7d9"
+              nodeBorderRadius={2}
+              zoomable={true}
+              pannable={true}
+              maskColor="rgba(8, 10, 11, 0.58)"
+              style={{
+                width: 230,
+                height: 150,
+                background: "#0c0f10",
+                border: "1px solid #343b3f",
+              }}
             />
 
           </ReactFlow>
-
-        )}
-
-
-        {/* ==============================================================
-            GRAPH HELP
-        ============================================================== */}
-
-        {graph.nodes.length > 0 && (
-
-          <div style={styles.graphInfo}>
-
-            <span style={styles.liveDot}></span>
-
-            Dependency graph
-
-            <span style={styles.separator}>
-              •
-            </span>
-
-            Drag to move
-
-            <span style={styles.separator}>
-              •
-            </span>
-
-            Scroll to zoom
-
-          </div>
 
         )}
 
@@ -476,533 +521,330 @@ const Graph = () => {
 };
 
 
-/* ============================================================================
-   HELPERS
-============================================================================ */
+// ============================================================================
+// Styles
+// ============================================================================
 
-/*
- * Extract only the filename from an absolute path.
- *
- * Example:
- * /home/harsh/project/src/index.js
- *
- * becomes:
- * index.js
- */
-const getFileName = (path: string) => {
-  const parts = path.split(/[\\/]/);
+const styles: {
+  [key: string]: React.CSSProperties;
+} = {
 
-  return parts[parts.length - 1] || path;
-};
-
-
-/*
- * Format node type for display.
- */
-const getNodeType = (type: string) => {
-  if (!type) {
-    return "FILE";
-  }
-
-  return type
-    .toUpperCase()
-    .slice(0, 8);
-};
-
-
-/* ============================================================================
-   STYLES
-============================================================================ */
-
-const styles = {
-
-  /* ================================================================
-     PAGE
-  ================================================================ */
+  // --------------------------------------------------------------------------
+  // Main Page
+  // --------------------------------------------------------------------------
 
   page: {
     minHeight: "100vh",
-
-    background: "#f7f8fc",
-
-    color: "#111827",
-
-    fontFamily: "Arial, sans-serif",
-
-    display: "flex",
-
-    flexDirection: "column" as const,
+    background: "#080a0b",
+    color: "#eef2f3",
+    padding: "30px 32px 32px",
+    boxSizing: "border-box",
+    fontFamily:
+      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
 
 
-  /* ================================================================
-     NAVBAR
-  ================================================================ */
-
-  navbar: {
-    height: "70px",
-
-    padding: "0 7%",
-
-    display: "flex",
-
-    alignItems: "center",
-
-    justifyContent: "space-between",
-
-    background: "#ffffff",
-
-    borderBottom: "1px solid #e5e7eb",
-
-    flexShrink: 0,
-  },
-
-  logo: {
-    fontSize: "26px",
-
-    fontWeight: "700",
-
-    cursor: "pointer",
-  },
-
-  navLinks: {
-    display: "flex",
-
-    gap: "10px",
-  },
-
-  navButton: {
-    border: "none",
-
-    background: "transparent",
-
-    padding: "10px 16px",
-
-    fontSize: "15px",
-
-    cursor: "pointer",
-
-    color: "#374151",
-  },
-
-  navButtonActive: {
-    border: "none",
-
-    background: "#eef2ff",
-
-    padding: "10px 16px",
-
-    borderRadius: "8px",
-
-    fontSize: "15px",
-
-    cursor: "pointer",
-
-    color: "#4f46e5",
-
-    fontWeight: "600",
-  },
-
-
-  /* ================================================================
-     HEADER
-  ================================================================ */
+  // --------------------------------------------------------------------------
+  // Header
+  // --------------------------------------------------------------------------
 
   header: {
-    minHeight: "145px",
-
-    padding: "25px 7%",
-
-    background: "#ffffff",
-
-    borderBottom: "1px solid #e5e7eb",
-
     display: "flex",
-
-    alignItems: "center",
-
     justifyContent: "space-between",
-
-    gap: "30px",
-
-    flexShrink: 0,
-  },
-
-  backButton: {
-    border: "none",
-
-    background: "transparent",
-
-    padding: "0",
-
-    marginBottom: "12px",
-
-    color: "#64748b",
-
-    fontSize: "13px",
-
-    cursor: "pointer",
-  },
-
-  eyebrow: {
-    color: "#4f46e5",
-
-    fontSize: "10px",
-
-    fontWeight: "700",
-
-    letterSpacing: "1.8px",
-
-    marginBottom: "7px",
-  },
-
-  heading: {
-    margin: "0 0 7px",
-
-    fontSize: "28px",
-
-    letterSpacing: "-0.7px",
-  },
-
-  description: {
-    margin: "0",
-
-    color: "#64748b",
-
-    fontSize: "13px",
-  },
-
-
-  /* ================================================================
-     STATS
-  ================================================================ */
-
-  stats: {
-    display: "flex",
-
-    gap: "12px",
-  },
-
-  stat: {
-    minWidth: "90px",
-
-    padding: "15px 18px",
-
-    background: "#f8fafc",
-
-    border: "1px solid #e5e7eb",
-
-    borderRadius: "12px",
-
-    textAlign: "center" as const,
-  },
-
-  statNumber: {
-    display: "block",
-
-    fontSize: "22px",
-
-    fontWeight: "700",
-
-    marginBottom: "4px",
-  },
-
-  statLabel: {
-    color: "#94a3b8",
-
-    fontSize: "10px",
-
-    textTransform: "uppercase" as const,
-
-    letterSpacing: "1px",
-  },
-
-
-  /* ================================================================
-     GRAPH CONTAINER
-  ================================================================ */
-
-  graphContainer: {
-    position: "relative" as const,
-
-    width: "100%",
-
-    /*
-     * IMPORTANT:
-     * React Flow needs a definite height.
-     */
-    height: "calc(100vh - 215px)",
-
-    minHeight: "600px",
-
-    background: "#ffffff",
-
-    overflow: "hidden",
-  },
-
-
-  /* ================================================================
-     GRAPH INFORMATION
-  ================================================================ */
-
-  graphInfo: {
-    position: "absolute" as const,
-
-    bottom: "18px",
-
-    left: "50%",
-
-    transform: "translateX(-50%)",
-
-    zIndex: 10,
-
-    padding: "9px 15px",
-
-    background: "rgba(255,255,255,0.94)",
-
-    border: "1px solid #e5e7eb",
-
-    borderRadius: "20px",
-
-    color: "#64748b",
-
-    fontSize: "10px",
-
-    boxShadow:
-      "0 4px 15px rgba(15,23,42,0.06)",
-
-    whiteSpace: "nowrap" as const,
-  },
-
-  liveDot: {
-    display: "inline-block",
-
-    width: "6px",
-
-    height: "6px",
-
-    borderRadius: "50%",
-
-    background: "#4f46e5",
-
-    marginRight: "7px",
-  },
-
-  separator: {
-    margin: "0 8px",
-
-    color: "#cbd5e1",
-  },
-
-
-  /* ================================================================
-     GRAPH NODES
-  ================================================================ */
-
-  node: {
-    minWidth: "170px",
-
-    padding: "0",
-
-    borderRadius: "12px",
-
-    border: "1px solid #dbe4ff",
-
-    background: "#ffffff",
-
-    boxShadow:
-      "0 8px 25px rgba(79,70,229,0.10)",
-  },
-
-  nodeContent: {
-    padding: "11px 13px",
-  },
-
-  nodeType: {
-    color: "#4f46e5",
-
-    fontSize: "8px",
-
-    fontWeight: "700",
-
-    letterSpacing: "1px",
-
-    marginBottom: "5px",
-  },
-
-  nodeName: {
-    color: "#111827",
-
-    fontSize: "12px",
-
-    fontWeight: "700",
-
-    marginBottom: "4px",
-  },
-
-  nodePath: {
-    color: "#94a3b8",
-
-    fontSize: "8px",
-
-    maxWidth: "145px",
-
-    overflow: "hidden",
-
-    textOverflow: "ellipsis",
-
-    whiteSpace: "nowrap" as const,
-  },
-
-
-  /* ================================================================
-     LOADING / ERROR
-  ================================================================ */
-
-  centerState: {
-    minHeight: "100vh",
-
-    display: "flex",
-
-    flexDirection: "column" as const,
-
     alignItems: "center",
-
-    justifyContent: "center",
-
-    background: "#f7f8fc",
-
-    textAlign: "center" as const,
-
-    padding: "30px",
-  },
-
-  spinner: {
-    width: "30px",
-
-    height: "30px",
-
-    border: "3px solid #e0e7ff",
-
-    borderTopColor: "#4f46e5",
-
-    borderRadius: "50%",
-
-    animation:
-      "spin 0.8s linear infinite",
-
+    gap: "30px",
     marginBottom: "20px",
   },
 
-  stateTitle: {
-    margin: "0 0 8px",
+  headerLeft: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+  },
 
+  backLink: {
+    border: "none",
+    background: "transparent",
+    color: "#aeb8bc",
+    padding: 0,
+    cursor: "pointer",
+    fontSize: "13px",
+    fontWeight: 600,
+    marginBottom: "10px",
+  },
+
+  title: {
+    margin: 0,
+    color: "#eef2f3",
+    fontSize: "34px",
+    fontWeight: 700,
+    letterSpacing: "-0.8px",
+  },
+
+  subtitle: {
+    margin: "7px 0 0",
+    color: "#8b969b",
+    fontSize: "15px",
+  },
+
+
+  // --------------------------------------------------------------------------
+  // Statistics
+  // --------------------------------------------------------------------------
+
+  statsContainer: {
+    display: "flex",
+    gap: "12px",
+  },
+
+  statCard: {
+    minWidth: "125px",
+    padding: "12px 16px",
+    border: "1px solid #2b3235",
+    borderRadius: "4px",
+    background: "#0d1012",
+    display: "flex",
+    alignItems: "center",
+    gap: "11px",
+    boxShadow:
+      "0 3px 12px rgba(15, 23, 42, 0.04)",
+  },
+
+  statIcon: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "9px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#15191b",
+    color: "#c5cdd0",
+    fontSize: "14px",
+    fontWeight: 700,
+  },
+
+  statNumber: {
+    fontSize: "24px",
+    fontWeight: 700,
+    lineHeight: 1.1,
+    color: "#eef2f3",
+  },
+
+  statLabel: {
+    marginTop: "3px",
+    fontSize: "10px",
+    color: "#8f9a9f",
+    fontWeight: 700,
+    letterSpacing: "0.8px",
+  },
+
+
+  // --------------------------------------------------------------------------
+  // Graph Wrapper
+  // --------------------------------------------------------------------------
+
+  graphWrapper: {
+    width: "100%",
+    height: "calc(100vh - 190px)",
+    minHeight: "500px",
+
+    border: "1px solid #2b3235",
+    borderRadius: "4px",
+
+    overflow: "hidden",
+
+    background: "#0b0e0f",
+
+    boxShadow:
+      "0 8px 30px rgba(15, 23, 42, 0.06)",
+
+    position: "relative",
+  },
+
+
+  // --------------------------------------------------------------------------
+  // Graph Nodes
+  // --------------------------------------------------------------------------
+
+  graphNode: {
+    width: 230,
+
+    padding: "14px 16px",
+
+    borderRadius: "3px",
+
+    border: "1px solid #3c4549",
+
+    background: "#111517",
+
+    color: "#eef2f3",
+
+    boxShadow:
+      "0 5px 18px rgba(79, 70, 229, 0.10)",
+
+    fontFamily:
+      "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+
+  nodeContent: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "5px",
+  },
+
+  nodeType: {
+    fontSize: "9px",
+    fontWeight: 700,
+    color: "#9ca7ab",
+    letterSpacing: "1px",
+    textTransform: "uppercase",
+  },
+
+  nodeName: {
+    fontSize: "14px",
+    fontWeight: 600,
+    color: "#d7dddf",
+    wordBreak: "break-word",
+  },
+
+
+  // --------------------------------------------------------------------------
+  // Loading State
+  // --------------------------------------------------------------------------
+
+  centerMessage: {
+    minHeight: "80vh",
+
+    display: "flex",
+    flexDirection: "column",
+
+    justifyContent: "center",
+    alignItems: "center",
+
+    textAlign: "center",
+  },
+
+  loader: {
+    width: "34px",
+    height: "34px",
+
+    borderRadius: "50%",
+
+    border: "3px solid #e0e7ff",
+    borderTop: "3px solid #6366f1",
+
+    marginBottom: "18px",
+
+    animation:
+      "spin 0.8s linear infinite",
+  },
+
+  loadingTitle: {
+    margin: 0,
+    color: "#1e293b",
     fontSize: "20px",
   },
 
-  stateText: {
-    margin: "0 0 20px",
-
-    color: "#64748b",
-
-    fontSize: "13px",
+  loadingText: {
+    marginTop: "8px",
+    color: "#8b969b",
+    fontSize: "15px",
   },
 
-  errorIcon: {
-    width: "45px",
 
-    height: "45px",
+  // --------------------------------------------------------------------------
+  // Error State
+  // --------------------------------------------------------------------------
+
+  errorIcon: {
+    width: "46px",
+    height: "46px",
 
     borderRadius: "50%",
 
     display: "flex",
-
     alignItems: "center",
-
     justifyContent: "center",
 
-    background: "#fff1f2",
+    background: "#fee2e2",
+    color: "#dc2626",
 
-    color: "#be123c",
-
-    fontWeight: "700",
+    fontSize: "22px",
+    fontWeight: 700,
 
     marginBottom: "15px",
   },
 
+  errorTitle: {
+    margin: 0,
+    color: "#1e293b",
+    fontSize: "20px",
+  },
 
-  /* ================================================================
-     BUTTON
-  ================================================================ */
+  errorText: {
+    maxWidth: "500px",
+    marginTop: "8px",
+    color: "#dc2626",
+    fontSize: "14px",
+  },
 
-  primaryButton: {
-    height: "45px",
+  backButton: {
+    marginTop: "15px",
 
-    padding: "0 18px",
+    padding: "11px 18px",
 
     border: "none",
-
     borderRadius: "9px",
 
-    background: "#111827",
-
+    background: "#4f46e5",
     color: "#ffffff",
 
-    fontSize: "13px",
-
-    fontWeight: "600",
-
     cursor: "pointer",
+
+    fontWeight: 600,
+    fontSize: "13px",
   },
 
 
-  /* ================================================================
-     EMPTY GRAPH
-  ================================================================ */
+  // --------------------------------------------------------------------------
+  // Empty Graph
+  // --------------------------------------------------------------------------
 
   emptyGraph: {
-    position: "absolute" as const,
-
-    inset: "0",
+    height: "100%",
 
     display: "flex",
-
-    flexDirection: "column" as const,
-
-    alignItems: "center",
+    flexDirection: "column",
 
     justifyContent: "center",
+    alignItems: "center",
 
-    textAlign: "center" as const,
+    textAlign: "center",
 
     padding: "30px",
   },
 
   emptyIcon: {
-    fontSize: "45px",
-
-    color: "#4f46e5",
-
+    fontSize: "50px",
+    color: "#6366f1",
     marginBottom: "10px",
   },
 
   emptyTitle: {
-    margin: "0 0 8px",
-
+    margin: 0,
+    color: "#1e293b",
     fontSize: "20px",
   },
 
   emptyText: {
-    maxWidth: "400px",
-
-    margin: "0 0 20px",
-
-    color: "#64748b",
-
-    fontSize: "13px",
-
-    lineHeight: "1.6",
+    maxWidth: "450px",
+    marginTop: "8px",
+    color: "#8b969b",
+    fontSize: "15px",
+    lineHeight: 1.6,
   },
 };
 
+
+// ============================================================================
 export default Graph;
